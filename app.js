@@ -1576,7 +1576,8 @@ source.addEventListener('input', saveDraft);
 /* ===================== INIT ===================== */
 (function init() {
   // Auto-detect dark mode if no saved theme
-  const raw = (() => { try { return localStorage.getItem(LS_KEY); } catch { return null; } })();\n  const savedTheme = raw ? (() => { try { return JSON.parse(raw).theme; } catch { return null; } })() : null;
+  const raw = (() => { try { return localStorage.getItem(LS_KEY); } catch { return null; } })();
+  const savedTheme = raw ? (() => { try { return JSON.parse(raw).theme; } catch { return null; } })() : null;
   if (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches) {
     setTheme('dark');
   } else {
