@@ -1154,6 +1154,12 @@ const ABOUT_HTML = `<div style="text-align:center">
   <strong style="font-size:20px">MarkFlow</strong>
   <div style="margin:8px 0;color:var(--fg3)">Version 2.1.0 &mdash; Full Edition</div>
   <p style="margin:12px 0">A free, open-source Markdown editor running entirely in your browser.<br/>No account, no cloud, no tracking.</p>
+  <p style="margin:8px 0;font-size:14px">Created by <strong>Eric Chi</strong><br/>
+  <span style="font-size:12px;color:var(--fg3)">Built with the assistance of GitHub Copilot</span></p>
+  <a href="https://paypal.me/8l8l8" target="_blank" rel="noopener"
+     style="display:inline-block;margin:10px 0;padding:8px 20px;background:#0070ba;color:#fff;border-radius:20px;text-decoration:none;font-size:13px;font-weight:600">
+    ☕ Buy me a coffee
+  </a>
   <hr style="border:none;border-top:1px solid var(--border);margin:12px 0"/>
   <p style="font-size:12px;color:var(--fg3)">MIT License &middot; Original work<br/>
   Powered by:
@@ -1571,6 +1577,13 @@ function loadDraft() {
 }
 
 source.addEventListener('input', saveDraft);
+
+/* ===================== AUTO-SAVE TO FILE ===================== */
+setInterval(async () => {
+  if (state.dirty && state._fileHandle) {
+    await saveFile();
+  }
+}, 30000);
 
 /* ===================== INIT ===================== */
 (function init() {
