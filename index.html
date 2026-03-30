@@ -1,0 +1,189 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MarkFlow — Free Markdown Editor</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- marked.js: MIT License https://github.com/markedjs/marked -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <!-- marked-footnote: MIT License https://github.com/bent10/marked-extensions -->
+  <script src="https://cdn.jsdelivr.net/npm/marked-footnote@1/dist/index.umd.min.js"></script>
+  <!-- highlight.js: BSD License https://github.com/highlightjs/highlight.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css" id="hljs-theme" />
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
+  <!-- KaTeX: MIT License https://github.com/KaTeX/KaTeX -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js"></script>
+  <!-- Mermaid: MIT License https://github.com/mermaid-js/mermaid -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+</head>
+<body class="theme-default" data-mode="preview">
+
+<!-- ======= MENU BAR ======= -->
+<header id="menubar">
+  <div id="app-title">MarkFlow</div>
+  <nav id="menu-nav">
+    <div class="menu-item">File
+      <ul class="dropdown">
+        <li data-action="new">New <span class="kbd">Ctrl+N</span></li>
+        <li data-action="open">Open… <span class="kbd">Ctrl+O</span></li>
+        <li data-action="save">Save <span class="kbd">Ctrl+S</span></li>
+        <li data-action="saveas">Save As… <span class="kbd">Ctrl+Shift+S</span></li>
+        <li class="sep"></li>
+        <li data-action="export-html">Export as HTML <span class="kbd">Ctrl+E</span></li>
+        <li data-action="export-pdf">Print / Save PDF <span class="kbd">Ctrl+P</span></li>
+        <li data-action="export-txt">Export as Plain Text</li>
+        <li class="sep"></li>
+        <li data-action="copy-html">Copy HTML to Clipboard</li>
+      </ul>
+    </div>
+    <div class="menu-item">Edit
+      <ul class="dropdown">
+        <li data-action="find">Find <span class="kbd">Ctrl+F</span></li>
+        <li data-action="replace">Find &amp; Replace <span class="kbd">Ctrl+H</span></li>
+        <li class="sep"></li>
+        <li data-action="fmt-bold">Bold <span class="kbd">Ctrl+B</span></li>
+        <li data-action="fmt-italic">Italic <span class="kbd">Ctrl+I</span></li>
+        <li data-action="fmt-underline">Underline <span class="kbd">Ctrl+U</span></li>
+        <li data-action="fmt-strike">Strikethrough</li>
+        <li data-action="fmt-highlight">Highlight</li>
+        <li data-action="fmt-superscript">Superscript</li>
+        <li data-action="fmt-subscript">Subscript</li>
+        <li class="sep"></li>
+        <li data-action="fmt-code">Inline Code</li>
+        <li data-action="fmt-codeblock">Code Block</li>
+        <li data-action="fmt-math">Inline Math</li>
+        <li data-action="fmt-mathblock">Math Block</li>
+        <li class="sep"></li>
+        <li data-action="fmt-link">Insert Link</li>
+        <li data-action="fmt-image">Insert Image</li>
+        <li data-action="fmt-table">Insert Table</li>
+        <li data-action="fmt-mermaid">Insert Diagram</li>
+        <li data-action="fmt-footnote">Insert Footnote</li>
+      </ul>
+    </div>
+    <div class="menu-item">View
+      <ul class="dropdown">
+        <li data-action="toggle-source">Toggle Source Mode <span class="kbd">Ctrl+/</span></li>
+        <li data-action="toggle-sidebar">Toggle Outline <span class="kbd">Ctrl+Shift+B</span></li>
+        <li data-action="toggle-focus">Focus Mode <span class="kbd">F8</span></li>
+        <li data-action="toggle-typewriter">Typewriter Mode <span class="kbd">F9</span></li>
+        <li data-action="toggle-wordwrap">Word Wrap <span class="kbd">F10</span></li>
+        <li data-action="toggle-spellcheck">Spell Check</li>
+        <li class="sep"></li>
+        <li data-action="zoom-in">Zoom In <span class="kbd">Ctrl++</span></li>
+        <li data-action="zoom-out">Zoom Out <span class="kbd">Ctrl+-</span></li>
+        <li data-action="zoom-reset">Reset Zoom <span class="kbd">Ctrl+0</span></li>
+      </ul>
+    </div>
+    <div class="menu-item">Theme
+      <ul class="dropdown">
+        <li data-action="theme-default">Default (Light)</li>
+        <li data-action="theme-dark">Dark</li>
+        <li data-action="theme-solarized">Solarized</li>
+        <li data-action="theme-github">GitHub</li>
+        <li data-action="theme-dracula">Dracula</li>
+      </ul>
+    </div>
+    <div class="menu-item">Help
+      <ul class="dropdown">
+        <li data-action="show-cheatsheet">Markdown Cheatsheet</li>
+        <li data-action="show-shortcuts">Keyboard Shortcuts</li>
+        <li data-action="show-about">About MarkFlow</li>
+      </ul>
+    </div>
+  </nav>
+  <div id="menu-right">
+    <span id="word-count">0 words</span>
+    <button id="btn-find" title="Find (Ctrl+F)">&#128269;</button>
+    <button id="btn-mode-toggle" title="Toggle Source / Preview (Ctrl+/)">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ======= TOOLBAR ======= -->
+<div id="toolbar">
+  <button title="Bold (Ctrl+B)" data-fmt="bold"><b>B</b></button>
+  <button title="Italic (Ctrl+I)" data-fmt="italic"><i>I</i></button>
+  <button title="Underline (Ctrl+U)" data-fmt="underline"><u>U</u></button>
+  <button title="Strikethrough" data-fmt="strike"><s>S</s></button>
+  <button title="Highlight ==text==" data-fmt="highlight" style="background:none">&#9632;<span style="font-size:10px">HL</span></button>
+  <button title="Superscript ^text^" data-fmt="superscript">X<sup style="font-size:9px">2</sup></button>
+  <button title="Subscript ~text~" data-fmt="subscript">X<sub style="font-size:9px">2</sub></button>
+  <div class="tb-sep"></div>
+  <button title="Heading 1" data-fmt="h1">H1</button>
+  <button title="Heading 2" data-fmt="h2">H2</button>
+  <button title="Heading 3" data-fmt="h3">H3</button>
+  <div class="tb-sep"></div>
+  <button title="Unordered List" data-fmt="ul">&#8226; List</button>
+  <button title="Ordered List" data-fmt="ol">1. List</button>
+  <button title="Task List" data-fmt="task">&#9745; Task</button>
+  <button title="Definition List" data-fmt="deflist">DL</button>
+  <div class="tb-sep"></div>
+  <button title="Blockquote" data-fmt="quote">&#10077;</button>
+  <button title="Code Block" data-fmt="codeblock">{ }</button>
+  <button title="Inline Math" data-fmt="math">$x$</button>
+  <button title="Math Block" data-fmt="mathblock">$$</button>
+  <button title="Horizontal Rule" data-fmt="hr">&#8213;</button>
+  <div class="tb-sep"></div>
+  <button title="Insert Link" data-fmt="link">&#128279;</button>
+  <button title="Insert Image" data-fmt="image">&#128247;</button>
+  <button title="Insert Table" data-fmt="table">&#9707;</button>
+  <button title="Insert Mermaid Diagram" data-fmt="mermaid">&#9654; Diagram</button>
+  <button title="Insert Footnote" data-fmt="footnote">FN</button>
+  <div class="tb-sep"></div>
+  <button title="Warning container" data-fmt="container-warning">&#9888;</button>
+  <button title="Info container" data-fmt="container-info">&#8505;</button>
+  <button title="Tip container" data-fmt="container-tip">&#128161;</button>
+</div>
+
+<!-- ======= FIND / REPLACE BAR ======= -->
+<div id="findbar" class="hidden">
+  <input id="find-input" type="text" placeholder="Find…" autocomplete="off" />
+  <input id="replace-input" type="text" placeholder="Replace…" autocomplete="off" />
+  <button id="find-prev" title="Previous">&#9650;</button>
+  <button id="find-next" title="Next">&#9660;</button>
+  <button id="find-replace-one" title="Replace">Replace</button>
+  <button id="find-replace-all" title="Replace All">All</button>
+  <span id="find-count"></span>
+  <label><input type="checkbox" id="find-regex" /> Regex</label>
+  <label><input type="checkbox" id="find-case" /> Case</label>
+  <button id="find-close" title="Close (Esc)">&#10005;</button>
+</div>
+
+<!-- ======= MAIN LAYOUT ======= -->
+<div id="layout">
+  <aside id="sidebar">
+    <div id="sidebar-header">Outline</div>
+    <ul id="outline-list"></ul>
+  </aside>
+  <main id="editor-area">
+    <textarea id="source" spellcheck="true" placeholder="Start writing Markdown here…"></textarea>
+    <div id="preview" contenteditable="false"></div>
+  </main>
+</div>
+
+<!-- ======= STATUS BAR ======= -->
+<footer id="statusbar">
+  <span id="status-file">Untitled</span>
+  <span id="status-stats">0 words · 0 chars · 0 lines</span>
+  <span id="status-mode">Preview</span>
+</footer>
+
+<!-- ======= MODALS ======= -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal-box">
+    <div id="modal-title"></div>
+    <div id="modal-body"></div>
+    <div id="modal-footer">
+      <button id="modal-ok">OK</button>
+      <button id="modal-cancel" class="hidden">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
