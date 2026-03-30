@@ -776,7 +776,6 @@ async function saveFileAs() {
   URL.revokeObjectURL(url); markClean();
 }
 
-function exportHTML() {
 /* ===================== EXPORT THEMES ===================== */
 const EXPORT_THEMES = {
   clean: {
