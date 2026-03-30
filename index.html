@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MarkFlow — Free Markdown Editor</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#4a90d9" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <link rel="stylesheet" href="style.css" />
   <!-- marked.js: MIT License https://github.com/markedjs/marked -->
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
@@ -18,8 +21,18 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js"></script>
   <!-- Mermaid: MIT License https://github.com/mermaid-js/mermaid -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <!-- CodeMirror 6: MIT License https://codemirror.net/ -->
+  <script src="https://cdn.jsdelivr.net/npm/@codemirror/state@6/dist/index.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@codemirror/view@6/dist/index.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@codemirror/commands@6/dist/index.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@codemirror/language@6/dist/index.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6/dist/index.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@codemirror/theme-one-dark@6/dist/index.umd.js"></script>
 </head>
 <body class="theme-default" data-mode="preview">
+
+<!-- ======= READING PROGRESS BAR ======= -->
+<div id="progress-bar"></div>
 
 <!-- ======= MENU BAR ======= -->
 <header id="menubar">
@@ -32,7 +45,7 @@
         <li data-action="save">Save <span class="kbd">Ctrl+S</span></li>
         <li data-action="saveas">Save As… <span class="kbd">Ctrl+Shift+S</span></li>
         <li class="sep"></li>
-        <li data-action="export-html">Export as HTML <span class="kbd">Ctrl+E</span></li>
+        <li data-action="export-html">Export as HTML … <span class="kbd">Ctrl+E</span></li>
         <li data-action="export-pdf">Print / Save PDF <span class="kbd">Ctrl+P</span></li>
         <li data-action="export-txt">Export as Plain Text</li>
         <li class="sep"></li>
@@ -60,6 +73,7 @@
         <li data-action="fmt-link">Insert Link</li>
         <li data-action="fmt-image">Insert Image</li>
         <li data-action="fmt-table">Insert Table</li>
+        <li data-action="table-editor">Table Editor…</li>
         <li data-action="fmt-mermaid">Insert Diagram</li>
         <li data-action="fmt-footnote">Insert Footnote</li>
       </ul>
@@ -67,6 +81,7 @@
     <div class="menu-item">View
       <ul class="dropdown">
         <li data-action="toggle-source">Toggle Source Mode <span class="kbd">Ctrl+/</span></li>
+        <li data-action="toggle-split">Split View <span class="kbd">Ctrl+Shift+/</span></li>
         <li data-action="toggle-sidebar">Toggle Outline <span class="kbd">Ctrl+Shift+B</span></li>
         <li data-action="toggle-focus">Focus Mode <span class="kbd">F8</span></li>
         <li data-action="toggle-typewriter">Typewriter Mode <span class="kbd">F9</span></li>
@@ -98,7 +113,8 @@
   <div id="menu-right">
     <span id="word-count">0 words</span>
     <button id="btn-find" title="Find (Ctrl+F)">&#128269;</button>
-    <button id="btn-mode-toggle" title="Toggle Source / Preview (Ctrl+/)">
+    <button id="btn-split-toggle" title="Split View (Ctrl+Shift+/)" style="font-size:14px;padding:0 8px">&#9707;</button>
+    <button id="btn-mode-toggle" title="Cycle view mode (Ctrl+/)">
       <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
     </button>
   </div>
@@ -154,6 +170,12 @@
   <button id="find-close" title="Close (Esc)">&#10005;</button>
 </div>
 
+<!-- ======= TAB BAR ======= -->
+<div id="tabbar">
+  <div id="tab-list"></div>
+  <button id="btn-new-tab" title="New Tab">+</button>
+</div>
+
 <!-- ======= MAIN LAYOUT ======= -->
 <div id="layout">
   <aside id="sidebar">
@@ -162,6 +184,7 @@
   </aside>
   <main id="editor-area">
     <textarea id="source" spellcheck="true" placeholder="Start writing Markdown here…"></textarea>
+    <div id="split-divider" title="Drag to resize"></div>
     <div id="preview" contenteditable="false"></div>
   </main>
 </div>
