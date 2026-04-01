@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head><title>Generate Icons</title></head>
+<body>
+<p>Click to generate and download PWA icons from icon.svg</p>
+<button onclick="gen()">Generate Icons</button>
+<canvas id="c" style="display:none"></canvas>
+<script>
+async function gen() {
+  const svg = await (await fetch('icon.svg')).text();
+  const blob = new Blob([svg], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  for (const size of [192, 512]) {
+    const img = new Image();
+    img.src = url;
+    await new Promise(r => img.onload = r);
+    const c = document.getElementById('c');
+    c.width = size; c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    const a = document.createElement('a');
+    a.download = `icon-${size}.png`;
+    a.href = c.toDataURL('image/png');
+    a.click();
+  }
+  URL.revokeObjectURL(url);
+  document.body.innerHTML += '<p>Done! Move icon-192.png and icon-512.png to your app folder.</p>';
+}
+</script>
+</body>
+</html>

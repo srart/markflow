@@ -4,8 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MarkFlow — Free Markdown Editor</title>
-  <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#4a90d9" />
+  <meta name="description" content="A free, fully-featured Markdown editor that runs entirely in your browser." />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <script>if(location.protocol!=='file:')document.head.insertAdjacentHTML('beforeend','<link rel="manifest" href="manifest.json">');</script>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <link rel="stylesheet" href="style.css" />
   <!-- marked.js: MIT License https://github.com/markedjs/marked -->
@@ -21,13 +24,20 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js"></script>
   <!-- Mermaid: MIT License https://github.com/mermaid-js/mermaid -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <!-- CodeMirror 6: MIT License https://codemirror.net/ -->
-  <script src="https://cdn.jsdelivr.net/npm/@codemirror/state@6/dist/index.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@codemirror/view@6/dist/index.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@codemirror/commands@6/dist/index.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@codemirror/language@6/dist/index.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6/dist/index.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@codemirror/theme-one-dark@6/dist/index.umd.js"></script>
+  <!-- CodeMirror 6: MIT License https://codemirror.net/ (loaded as ES modules) -->
+  <script type="module">
+    import {EditorState} from 'https://esm.sh/@codemirror/state@6';
+    import {EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine} from 'https://esm.sh/@codemirror/view@6';
+    import {defaultKeymap, history, historyKeymap, indentWithTab} from 'https://esm.sh/@codemirror/commands@6';
+    import {markdown} from 'https://esm.sh/@codemirror/lang-markdown@6';
+    import {oneDark} from 'https://esm.sh/@codemirror/theme-one-dark@6';
+    window['@codemirror/state'] = {EditorState};
+    window['@codemirror/view'] = {EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine};
+    window['@codemirror/commands'] = {defaultKeymap, history, historyKeymap, indentWithTab};
+    window['@codemirror/lang-markdown'] = {markdown};
+    window['@codemirror/theme-one-dark'] = {oneDark};
+    window.dispatchEvent(new Event('codemirror-ready'));
+  </script>
 </head>
 <body class="theme-default" data-mode="preview">
 
@@ -42,6 +52,7 @@
       <ul class="dropdown">
         <li data-action="new">New <span class="kbd">Ctrl+N</span></li>
         <li data-action="open">Open… <span class="kbd">Ctrl+O</span></li>
+        <li data-action="open-folder">Open Folder…</li>
         <li data-action="save">Save <span class="kbd">Ctrl+S</span></li>
         <li data-action="saveas">Save As… <span class="kbd">Ctrl+Shift+S</span></li>
         <li class="sep"></li>
@@ -50,6 +61,8 @@
         <li data-action="export-txt">Export as Plain Text</li>
         <li class="sep"></li>
         <li data-action="copy-html">Copy HTML to Clipboard</li>
+        <li class="sep"></li>
+        <li data-action="set-logo">Set Document Logo…</li>
       </ul>
     </div>
     <div class="menu-item">Edit
@@ -82,6 +95,7 @@
       <ul class="dropdown">
         <li data-action="toggle-source">Toggle Source Mode <span class="kbd">Ctrl+/</span></li>
         <li data-action="toggle-split">Split View <span class="kbd">Ctrl+Shift+/</span></li>
+        <li data-action="detach-preview">Detach Preview Window <span class="kbd">Ctrl+Shift+D</span></li>
         <li data-action="toggle-sidebar">Toggle Outline <span class="kbd">Ctrl+Shift+B</span></li>
         <li data-action="toggle-focus">Focus Mode <span class="kbd">F8</span></li>
         <li data-action="toggle-typewriter">Typewriter Mode <span class="kbd">F9</span></li>
@@ -179,8 +193,19 @@
 <!-- ======= MAIN LAYOUT ======= -->
 <div id="layout">
   <aside id="sidebar">
-    <div id="sidebar-header">Outline</div>
-    <ul id="outline-list"></ul>
+    <div id="sidebar-tabs">
+      <button class="sidebar-tab active" data-panel="outline">Outline</button>
+      <button class="sidebar-tab" data-panel="files">Files</button>
+    </div>
+    <div id="panel-outline" class="sidebar-panel">
+      <ul id="outline-list"></ul>
+    </div>
+    <div id="panel-files" class="sidebar-panel hidden">
+      <div id="files-toolbar">
+        <button id="btn-open-folder" title="Open Folder">📂 Open Folder</button>
+      </div>
+      <ul id="file-list"></ul>
+    </div>
   </aside>
   <main id="editor-area">
     <textarea id="source" spellcheck="true" placeholder="Start writing Markdown here…"></textarea>

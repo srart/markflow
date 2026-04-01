@@ -5,7 +5,7 @@
  */
 
 /* ===================== SERVICE WORKER ===================== */
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
@@ -298,13 +298,14 @@ const findCount    = document.getElementById('find-count');
 
 /* ===================== CODEMIRROR 6 ===================== */
 let cmView = null;
-(function initCodeMirror() {
+function initCodeMirror() {
+  if (cmView) return; // already initialized
   try {
-    const { EditorState } = CM_State || window['@codemirror/state'] || {};
-    const { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine } = CM_View || window['@codemirror/view'] || {};
-    const { defaultKeymap, historyKeymap, history, indentWithTab } = CM_Commands || window['@codemirror/commands'] || {};
-    const { markdown } = CM_Markdown || window['@codemirror/lang-markdown'] || {};
-    const { oneDark } = CM_OneDark || window['@codemirror/theme-one-dark'] || {};
+    const { EditorState } = window['@codemirror/state'] || {};
+    const { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine } = window['@codemirror/view'] || {};
+    const { defaultKeymap, historyKeymap, history, indentWithTab } = window['@codemirror/commands'] || {};
+    const { markdown } = window['@codemirror/lang-markdown'] || {};
+    const { oneDark } = window['@codemirror/theme-one-dark'] || {};
     if (!EditorState || !EditorView || !markdown) return; // CDN failed, use textarea
 
     const darkTheme = EditorView.theme({
@@ -378,12 +379,76 @@ let cmView = null;
   } catch (e) {
     console.warn('CodeMirror init failed, using plain textarea:', e);
   }
+}
+// Try immediately (in case modules somehow loaded synchronously), then listen for async load
+initCodeMirror();
+window.addEventListener('codemirror-ready', initCodeMirror);
+
+/* ===================== DOCUMENT LOGO ===================== */
+let logoDataUrl = null;
+(function preloadLogo() {
+  // Only try fetching logo.png over http/https (file:// will always fail)
+  if (location.protocol !== 'file:') {
+    const img = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      try { logoDataUrl = canvas.toDataURL('image/png'); } catch(e) { /* tainted canvas */ }
+    };
+    img.src = 'logo.png';
+  }
+  // Also try loading from localStorage (set via File > Set Logo)
+  const saved = localStorage.getItem('markflow_logo');
+  if (saved) logoDataUrl = saved;
 })();
 
+function getLogoHeaderHTML() {
+  const src = logoDataUrl;
+  if (!src) return '';
+  return '<div class="doc-logo-header"><img src="' + src + '" alt="Logo" class="doc-logo"></div>';
+}
+
+function setDocumentLogo() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/png,image/jpeg,image/svg+xml,image/webp';
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      logoDataUrl = evt.target.result;
+      try { localStorage.setItem('markflow_logo', logoDataUrl); } catch(e) { /* quota */ }
+      renderPreview(source.value);
+      showAlert('Logo Set', 'Document logo updated. It will appear at the top of every document preview, export, and print.');
+    };
+    reader.readAsDataURL(file);
+  });
+  input.click();
+}
+
 /* ===================== RENDER ===================== */
+// Cache of resolved blob URLs for relative images: path → blobURL
+const _imgBlobCache = new Map();
+const _PLACEHOLDER_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+// Rewrite relative <img src="..."> to data-rel-src placeholders BEFORE inserting into DOM,
+// so the browser never attempts to fetch broken file:// paths.
+function neutralizeRelativeImages(html) {
+  return html.replace(/<img\s([^>]*?)src="([^"]*?)"([^>]*?)>/gi, (match, before, src, after) => {
+    if (!src || /^(https?:|data:|blob:|#)/i.test(src)) return match;
+    return `<img ${before}src="${_PLACEHOLDER_GIF}" data-rel-src="${src}"${after}>`;
+  });
+}
+
 async function renderPreview(md) {
   const html = marked.parse(preMath(md || ''));
-  preview.innerHTML = postMath(html);
+  preview.innerHTML = neutralizeRelativeImages(getLogoHeaderHTML() + postMath(html));
+
+  // Resolve relative image paths through directory handle
+  await resolvePreviewImages();
 
   // Mermaid — render each diagram individually to avoid getBoundingClientRect issues in v11
   for (const el of Array.from(preview.querySelectorAll('.mermaid'))) {
@@ -413,6 +478,45 @@ async function renderPreview(md) {
   if (state.findOpen && findInput.value) {
     clearTimeout(_renderTimer);
     applyFindHighlights();
+  }
+}
+
+/* --- Resolve relative image src via directory handle --- */
+async function resolvePreviewImages() {
+  const imgs = preview.querySelectorAll('img[data-rel-src]');
+  if (!imgs.length) return;
+
+  if (!state._dirHandle) {
+    // No directory handle — show alt text, don't attempt fetch
+    for (const img of imgs) {
+      const src = img.dataset.relSrc;
+      img.alt = `[Open folder to view: ${src}]`;
+    }
+    return;
+  }
+
+  for (const img of imgs) {
+    const src = img.dataset.relSrc;
+    if (!src) continue;
+
+    // Check cache first
+    if (_imgBlobCache.has(src)) {
+      img.src = _imgBlobCache.get(src);
+      continue;
+    }
+
+    // Try to resolve through directory handle
+    try {
+      const fh = await resolveFileFromDir(state._dirHandle, src);
+      const file = await fh.getFile();
+      const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/png' });
+      const blobUrl = URL.createObjectURL(blob);
+      _imgBlobCache.set(src, blobUrl);
+      img.src = blobUrl;
+    } catch {
+      // File not found — show helpful alt text
+      img.alt = `[Image not found: ${src}]`;
+    }
   }
 }
 
@@ -483,8 +587,13 @@ function updateStats(md) {
 }
 
 /* ===================== DIRTY FLAG ===================== */
-function markDirty() { if (!state.dirty) { state.dirty = true; statusFile.classList.add('dirty'); } }
-function markClean() { state.dirty = false; statusFile.classList.remove('dirty'); }
+/* Keep browser tab title in sync with the current file name */
+new MutationObserver(() => {
+  document.title = (statusFile.textContent || 'Untitled') + ' — MarkFlow';
+}).observe(statusFile, { childList: true, characterData: true, subtree: true });
+
+let markDirty = function() { if (!state.dirty) { state.dirty = true; statusFile.classList.add('dirty'); } };
+let markClean = function() { state.dirty = false; statusFile.classList.remove('dirty'); };
 
 /* ===================== TOOLBAR FORMATTING ===================== */
 const FMT = {
@@ -521,7 +630,43 @@ const FMT = {
 function applyFormat(type) {
   const fmt = FMT[type];
   if (!fmt) return;
-  if (state.mode !== 'source') setMode('source');
+  if (state.mode === 'preview') setMode('split');
+
+  // When CodeMirror is active, apply directly through CM
+  if (cmView) {
+    const sel = cmView.state.selection.main;
+    const selected = cmView.state.sliceDoc(sel.from, sel.to);
+    let insert, selFrom, selTo;
+
+    if (fmt.insert) {
+      insert = fmt.insert;
+      selFrom = sel.from + insert.length;
+      selTo = selFrom;
+    } else if (fmt.wrap) {
+      const [open, close] = fmt.wrap;
+      const text = selected || fmt.placeholder;
+      insert = open + text + close;
+      selFrom = sel.from + open.length;
+      selTo = selFrom + text.length;
+    } else if (fmt.prefix) {
+      const lines = (selected || '').split('\n');
+      insert = selected ? lines.map(l => fmt.prefix + l).join('\n') : fmt.prefix;
+      selFrom = sel.from + insert.length;
+      selTo = selFrom;
+    }
+
+    if (insert !== undefined) {
+      cmView.dispatch({
+        changes: { from: sel.from, to: sel.to, insert },
+        selection: { anchor: selFrom, head: selTo },
+        scrollIntoView: true
+      });
+      cmView.focus();
+    }
+    return;
+  }
+
+  // Fallback: plain textarea
   const ta = source;
   const start = ta.selectionStart;
   const end   = ta.selectionEnd;
@@ -705,24 +850,36 @@ function newFile() {
     state.fileName = 'Untitled'; state.filePath = null; state._fileHandle = null;
     statusFile.textContent = 'Untitled'; markClean(); renderPreview('');
     setMode('split'); source.focus();
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (tab) { tab.fileName = 'Untitled'; tab.filePath = null; tab.fileHandle = null; tab.content = ''; renderTabBar(); saveTabs(); }
   };
   state.dirty ? showConfirm('Unsaved Changes', 'Discard current changes and start a new document?', proceed) : proceed();
 }
 
 async function openFile() {
   if ('showOpenFilePicker' in window) {
+    let fh;
     try {
-      const [fh] = await window.showOpenFilePicker({
+      [fh] = await window.showOpenFilePicker({
         types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.txt'] } }]
       });
+    } catch (e) {
+      return; // user cancelled or API error — don't fall through to fallback
+    }
+    try {
       const file = await fh.getFile();
       const text = await file.text();
       state._fileHandle = fh;
       source.value = text; if (window._cmSetContent) _cmSetContent(text);
       state.fileName = file.name; state.filePath = file.name;
       statusFile.textContent = file.name; markClean(); renderPreview(source.value); setMode(state.mode);
-      return;
-    } catch (e) { if (e.name === 'AbortError') return; }
+      const tab = tabs.find(t => t.id === activeTabId);
+      if (tab) { tab.fileName = file.name; tab.filePath = file.name; tab.fileHandle = fh; tab.content = text; renderTabBar(); saveTabs(); }
+    } catch (e) {
+      console.error('Error reading file:', e);
+      showAlert('Error', 'Could not read file: ' + (e.message || e));
+    }
+    return;
   }
   // Fallback
   const input = document.createElement('input');
@@ -732,8 +889,10 @@ async function openFile() {
     const reader = new FileReader();
     reader.onload = evt => {
       source.value = evt.target.result; if (window._cmSetContent) _cmSetContent(evt.target.result);
-      state.fileName = file.name; state.filePath = file.name;
+      state.fileName = file.name; state.filePath = file.name; state._fileHandle = null;
       statusFile.textContent = file.name; markClean(); renderPreview(source.value); setMode(state.mode);
+      const tab = tabs.find(t => t.id === activeTabId);
+      if (tab) { tab.fileName = file.name; tab.filePath = file.name; tab.fileHandle = null; tab.content = evt.target.result; renderTabBar(); saveTabs(); }
     };
     reader.readAsText(file);
   });
@@ -743,38 +902,125 @@ async function openFile() {
 async function saveFile() {
   if (state._fileHandle) {
     try {
+      // Re-request write permission if needed (e.g. after page reload)
+      if (state._fileHandle.requestPermission) {
+        const perm = await state._fileHandle.requestPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') { await saveFileAs(); return; }
+      }
       const writable = await state._fileHandle.createWritable();
       await writable.write(source.value);
       await writable.close();
       markClean(); return;
     } catch (e) { if (e.name === 'AbortError') return; }
   }
-  const name = state.fileName.endsWith('.md') ? state.fileName : state.fileName + '.md';
-  downloadBlob(source.value, name, 'text/markdown');
-  markClean();
+  // No file handle — prompt Save As so user picks a real location
+  await saveFileAs();
 }
 
 async function saveFileAs() {
   if ('showSaveFilePicker' in window) {
+    let fh;
     try {
-      const fh = await window.showSaveFilePicker({
+      fh = await window.showSaveFilePicker({
         suggestedName: state.fileName.replace(/\.md$/, '') + '.md',
         types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }]
       });
-      state._fileHandle = fh;
-      state.fileName = fh.name || state.fileName;
-      statusFile.textContent = state.fileName;
-      await saveFile(); return;
-    } catch (e) { if (e.name === 'AbortError') return; }
+    } catch (e) {
+      return; // user cancelled or API error — don't fall through to prompt
+    }
+    state._fileHandle = fh;
+    state.fileName = fh.name || state.fileName;
+    state.filePath = state.fileName;
+    statusFile.textContent = state.fileName;
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (tab) { tab.fileName = state.fileName; tab.filePath = state.filePath; tab.fileHandle = fh; renderTabBar(); saveTabs(); }
+    await saveFile();
+    return;
   }
   const name = prompt('File name:', state.fileName.replace(/\.md$/, '') + '.md');
   if (!name) return;
   state.fileName = name; statusFile.textContent = name;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (tab) { tab.fileName = name; renderTabBar(); saveTabs(); }
   const blob = new Blob([source.value], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   URL.revokeObjectURL(url); markClean();
 }
+
+/* ===================== OPEN FOLDER & LINKED FILES ===================== */
+async function openFolder() {
+  if (!('showDirectoryPicker' in window)) {
+    showAlert('Not Supported', 'Your browser does not support folder access. Use Chrome or Edge for this feature.');
+    return;
+  }
+  try {
+    state._dirHandle = await window.showDirectoryPicker();
+  } catch (e) { return; /* cancelled */ }
+
+  // Switch sidebar to Files tab and populate
+  document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b.dataset.panel === 'files'));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'panel-files'));
+  if (!state.sidebarOpen) toggleSidebar();
+  await renderFileList();
+
+  // Re-render preview to resolve any relative images
+  await renderPreview(source.value);
+}
+
+async function resolveFileFromDir(dirHandle, relativePath) {
+  const decoded = decodeURIComponent(relativePath).replace(/\\/g, '/');
+  const parts = decoded.split('/').filter(Boolean);
+  const fileName = parts.pop();
+  if (!fileName) return null;
+  let dir = dirHandle;
+  for (const part of parts) {
+    dir = await dir.getDirectoryHandle(part);
+  }
+  return dir.getFileHandle(fileName);
+}
+
+async function openLinkedFile(href) {
+  if (!('showDirectoryPicker' in window)) {
+    showAlert('Not Supported', 'Your browser does not support folder access. Use Chrome or Edge.');
+    return;
+  }
+  if (!state._dirHandle) {
+    const ok = await showModal('Select Folder',
+      '<p>To follow links to local files, please select the folder that contains your documents.</p>' +
+      '<p style="color:var(--fg3);font-size:13px">You only need to do this once per session.</p>',
+      { confirm: true });
+    if (!ok) return;
+    try {
+      state._dirHandle = await window.showDirectoryPicker();
+    } catch (e) { return; }
+  }
+  try {
+    const fh = await resolveFileFromDir(state._dirHandle, href);
+    const file = await fh.getFile();
+    const text = await file.text();
+    const tab = createTab({ content: text, fileName: file.name, filePath: href, fileHandle: fh });
+    switchTab(tab.id);
+  } catch (e) {
+    showAlert('File Not Found', 'Could not open <strong>' + escapeHtml(href) + '</strong>.<br><br>' +
+      'Make sure the selected folder contains this file path.<br>' +
+      '<span style="font-size:13px;color:var(--fg3)">' + escapeHtml(e.message || String(e)) + '</span>');
+  }
+}
+
+/* Intercept clicks on local .md links in the preview */
+preview.addEventListener('click', e => {
+  const link = e.target.closest('a[href]');
+  if (!link) return;
+  const href = link.getAttribute('href');
+  if (!href) return;
+  // Only intercept local file links (not http/https/mailto)
+  if (/^(https?:|mailto:|#)/.test(href)) return;
+  if (/\.(md|markdown|txt)$/i.test(href)) {
+    e.preventDefault();
+    openLinkedFile(href);
+  }
+});
 
 /* ===================== EXPORT THEMES ===================== */
 const EXPORT_THEMES = {
@@ -824,6 +1070,7 @@ function showExportDialog() {
 
 function buildHTMLExport(themeName = 'clean') {
   const theme = EXPORT_THEMES[themeName] || EXPORT_THEMES.clean;
+  const logoCss = `.doc-logo-header{margin-bottom:20px}.doc-logo{height:48px;width:auto}`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -832,7 +1079,7 @@ function buildHTMLExport(themeName = 'clean') {
 <title>${escapeHtml(state.fileName)}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css"/>
-<style>${theme.css}</style>
+<style>${theme.css}${logoCss}</style>
 </head>
 <body>
 ${preview.innerHTML}
@@ -980,11 +1227,15 @@ function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function scrollToMatch(idx) {
   if (!findMatches[idx]) return;
   const m = findMatches[idx];
-  source.focus();
-  source.setSelectionRange(m.index, m.index + m.length);
+  if (cmView) {
+    cmView.dispatch({ selection: { anchor: m.index, head: m.index + m.length }, scrollIntoView: true });
+    cmView.focus();
+  } else {
+    source.focus();
+    source.setSelectionRange(m.index, m.index + m.length);
+  }
   findCurrent = idx;
   findCount.textContent = `${idx + 1} / ${findMatches.length}`;
-  // If in preview mode, no selection — just re-render with highlights
 }
 
 function findNext() {
@@ -1001,8 +1252,13 @@ function findPrev() {
 function doReplaceOne() {
   if (!findMatches[findCurrent]) { doFind(); return; }
   const m = findMatches[findCurrent];
-  source.setRangeText(replaceInput.value, m.index, m.index + m.length, 'end');
-  onSourceInput(); doFind();
+  if (cmView) {
+    cmView.dispatch({ changes: { from: m.index, to: m.index + m.length, insert: replaceInput.value } });
+  } else {
+    source.setRangeText(replaceInput.value, m.index, m.index + m.length, 'end');
+    onSourceInput();
+  }
+  doFind();
 }
 function doReplaceAll() {
   if (!findMatches.length) { doFind(); return; }
@@ -1011,8 +1267,14 @@ function doReplaceAll() {
   try {
     const flags = isCase ? 'g' : 'gi';
     const rx = isRx ? new RegExp(findInput.value, flags) : new RegExp(escapeRegex(findInput.value), flags);
-    source.value = source.value.replace(rx, replaceInput.value);
-    onSourceInput(); doFind();
+    const newText = source.value.replace(rx, replaceInput.value);
+    if (cmView) {
+      cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: newText } });
+    } else {
+      source.value = newText;
+      onSourceInput();
+    }
+    doFind();
   } catch { findCount.textContent = 'Invalid regex'; }
 }
 
@@ -1221,10 +1483,15 @@ function showTableEditor() {
     const toRow = row => '| ' + row.join(' | ') + ' |';
     const md = '\n' + toRow(data[0]) + '\n' + toRow(sep) + '\n' + data.slice(1).map(toRow).join('\n') + '\n';
     if (state.mode !== 'source' && state.mode !== 'split') setMode('split');
-    const s = source.selectionStart || source.value.length;
-    source.setRangeText(md, s, s, 'end');
-    if (window._cmSetContent) _cmSetContent(source.value);
-    onSourceInput();
+    if (cmView) {
+      const pos = cmView.state.selection.main.from;
+      cmView.dispatch({ changes: { from: pos, to: pos, insert: md }, scrollIntoView: true });
+      cmView.focus();
+    } else {
+      const s = source.selectionStart || source.value.length;
+      source.setRangeText(md, s, s, 'end');
+      onSourceInput();
+    }
     modalResolve = null;
   };
 }
@@ -1236,12 +1503,14 @@ document.querySelectorAll('.dropdown li[data-action]').forEach(li => {
     switch (li.dataset.action) {
       case 'new':               newFile(); break;
       case 'open':              openFile(); break;
+      case 'open-folder':       openFolder(); break;
       case 'save':              saveFile(); break;
       case 'saveas':            saveFileAs(); break;
       case 'export-html':       showExportDialog(); break;
       case 'export-pdf':        exportPDF(); break;
       case 'export-txt':        exportTxt(); break;
       case 'copy-html':         copyHTMLToClipboard(); break;
+      case 'set-logo':          setDocumentLogo(); break;
       case 'find':              openFind(false); break;
       case 'replace':           openFind(true); break;
       case 'fmt-bold':          applyFormat('bold'); break;
@@ -1279,6 +1548,7 @@ document.querySelectorAll('.dropdown li[data-action]').forEach(li => {
       case 'show-cheatsheet':   showAlert('Markdown Cheatsheet', CHEATSHEET_HTML); break;
       case 'show-shortcuts':    showAlert('Keyboard Shortcuts', SHORTCUTS_HTML); break;
       case 'show-about':        showAlert('About MarkFlow', ABOUT_HTML); break;
+      case 'detach-preview':    detachPreview(); break;
     }
   });
 });
@@ -1288,6 +1558,230 @@ function toggleSidebar() {
   state.sidebarOpen = !state.sidebarOpen;
   sidebar.classList.toggle('hidden', !state.sidebarOpen);
 }
+
+/* Sidebar tab switching */
+document.getElementById('sidebar-tabs').addEventListener('click', e => {
+  const btn = e.target.closest('.sidebar-tab');
+  if (!btn) return;
+  const panel = btn.dataset.panel;
+  document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'panel-' + panel));
+});
+
+/* Files panel */
+const fileList = document.getElementById('file-list');
+document.getElementById('btn-open-folder').addEventListener('click', () => openFolder());
+
+async function scanDirectory(dirHandle, path = '', depth = 0) {
+  const entries = [];
+  for await (const entry of dirHandle.values()) {
+    entries.push(entry);
+  }
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  const results = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const rel = path ? path + '/' + entry.name : entry.name;
+    if (entry.kind === 'directory') {
+      results.push({ name: entry.name, path: rel, kind: 'directory', depth, handle: entry });
+      if (depth < 3) {
+        const children = await scanDirectory(entry, rel, depth + 1);
+        results.push(...children);
+      }
+    } else {
+      results.push({ name: entry.name, path: rel, kind: 'file', depth, handle: entry });
+    }
+  }
+  return results;
+}
+
+async function renderFileList() {
+  if (!state._dirHandle) {
+    fileList.innerHTML = '<li style="color:var(--fg3);padding:12px;font-size:12px">No folder opened.<br>Click "Open Folder" above.</li>';
+    return;
+  }
+  fileList.innerHTML = '<li style="color:var(--fg3);padding:12px;font-size:12px">Scanning…</li>';
+  try {
+    const items = await scanDirectory(state._dirHandle);
+    fileList.innerHTML = '';
+    if (!items.length) {
+      fileList.innerHTML = '<li style="color:var(--fg3);padding:12px;font-size:12px">Folder is empty.</li>';
+      return;
+    }
+    for (const item of items) {
+      const li = document.createElement('li');
+      const indent = Math.min(item.depth, 3);
+      if (indent) li.classList.add('indent-' + indent);
+      const icon = document.createElement('span');
+      icon.className = 'file-icon';
+      if (item.kind === 'directory') {
+        icon.textContent = '📁';
+        li.classList.add('dir');
+      } else if (/\.(md|markdown|txt)$/i.test(item.name)) {
+        icon.textContent = '📝';
+      } else if (/\.(jpe?g|png|gif|webp|svg|bmp)$/i.test(item.name)) {
+        icon.textContent = '🖼️';
+      } else {
+        icon.textContent = '📄';
+      }
+      li.appendChild(icon);
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = item.name;
+      li.appendChild(nameSpan);
+      li.title = item.path;
+
+      if (item.kind === 'file' && /\.(md|markdown|txt)$/i.test(item.name)) {
+        li.addEventListener('click', async () => {
+          try {
+            const file = await item.handle.getFile();
+            const text = await file.text();
+            const tab = createTab({ content: text, fileName: file.name, filePath: item.path, fileHandle: item.handle });
+            switchTab(tab.id);
+          } catch (e) {
+            showAlert('Error', 'Could not open file: ' + (e.message || e));
+          }
+        });
+      } else if (item.kind === 'file' && /\.(jpe?g|png|gif|webp|svg|bmp)$/i.test(item.name)) {
+        li.addEventListener('click', async () => {
+          try {
+            const file = await item.handle.getFile();
+            const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/png' });
+            const blobUrl = URL.createObjectURL(blob);
+            const tag = `![${file.name}](${item.path})`;
+            if (cmView) {
+              const pos = cmView.state.selection.main.from;
+              cmView.dispatch({ changes: { from: pos, to: pos, insert: tag }, scrollIntoView: true });
+              cmView.focus();
+            } else {
+              const s = source.selectionStart || source.value.length;
+              source.setRangeText(tag, s, s, 'end');
+              onSourceInput();
+            }
+            _imgBlobCache.set(item.path, blobUrl);
+          } catch (e) {
+            showAlert('Error', 'Could not insert image: ' + (e.message || e));
+          }
+        });
+      }
+      fileList.appendChild(li);
+    }
+  } catch (e) {
+    fileList.innerHTML = '<li style="color:var(--fg3);padding:12px;font-size:12px">Error scanning folder.</li>';
+  }
+}
+
+/* ===================== DETACHED PREVIEW WINDOW ===================== */
+let _detachedWin = null;
+
+function detachPreview() {
+  // If already open, close it
+  if (_detachedWin && !_detachedWin.closed) {
+    _detachedWin.close();
+    _detachedWin = null;
+    // Restore inline preview
+    preview.classList.remove('detached-hidden');
+    setMode('split');
+    return;
+  }
+
+  // Try to position on a second screen if available
+  const screenLeft = window.screen.availLeft || 0;
+  const screenTop = window.screen.availTop || 0;
+  const w = Math.round(screen.availWidth / 2);
+  const h = screen.availHeight;
+  // Open on the opposite half of the current screen
+  const myLeft = window.screenX || window.screenLeft || 0;
+  const mid = screenLeft + screen.availWidth / 2;
+  const popLeft = myLeft < mid ? mid : screenLeft;
+
+  _detachedWin = window.open('', 'markflow-preview',
+    `width=${w},height=${h},left=${popLeft},top=${screenTop},menubar=no,toolbar=no,location=no,status=no`);
+  if (!_detachedWin) {
+    showAlert('Popup Blocked', 'Your browser blocked the preview window. Allow popups for this site and try again.');
+    return;
+  }
+
+  // Build the preview document
+  const baseUrl = location.href.replace(/[^/]*$/, '');
+  const doc = _detachedWin.document;
+  doc.open();
+  doc.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MarkFlow Preview — ${escapeHtml(state.fileName)}</title>
+<link rel="icon" type="image/svg+xml" href="${baseUrl}icon.svg"/>
+<link rel="stylesheet" href="${baseUrl}style.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css"/>
+<style>
+html, body { height: auto; overflow: auto; }
+#preview {
+  position: static;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px;
+}
+.sync-indicator { position: fixed; bottom: 12px; right: 12px; padding: 4px 10px; font-size: 11px;
+  background: var(--accent, #4a90d9); color: #fff; border-radius: 12px; opacity: 0; transition: opacity .3s; }
+.sync-indicator.show { opacity: 1; }
+</style>
+</head>
+<body class="${document.body.className}">
+<div id="preview"></div>
+<div class="sync-indicator" id="sync-ind">Live synced</div>
+</body>
+</html>`);
+  doc.close();
+
+  // Initial content
+  _detachedWin.document.getElementById('preview').innerHTML = preview.innerHTML;
+
+  // Flash the sync indicator
+  const ind = _detachedWin.document.getElementById('sync-ind');
+  ind.classList.add('show');
+  setTimeout(() => ind.classList.remove('show'), 2000);
+
+  // Switch main window to source-only mode
+  setMode('source');
+  preview.classList.add('detached-hidden');
+
+  // Clean up when the popup is closed
+  const checkClosed = setInterval(() => {
+    if (_detachedWin && _detachedWin.closed) {
+      clearInterval(checkClosed);
+      _detachedWin = null;
+      preview.classList.remove('detached-hidden');
+      setMode('split');
+    }
+  }, 500);
+}
+
+// Sync preview content to detached window
+const _origRenderPreview = renderPreview;
+renderPreview = async function(md) {
+  const result = await _origRenderPreview(md);
+  if (_detachedWin && !_detachedWin.closed) {
+    try {
+      const root = _detachedWin.document.getElementById('preview');
+      if (root) {
+        root.innerHTML = preview.innerHTML;
+        // Update title
+        _detachedWin.document.title = 'MarkFlow Preview — ' + state.fileName;
+        // Flash sync indicator
+        const ind = _detachedWin.document.getElementById('sync-ind');
+        if (ind) { ind.classList.add('show'); setTimeout(() => ind.classList.remove('show'), 800); }
+      }
+      // Apply theme
+      _detachedWin.document.body.className = document.body.className;
+    } catch { /* cross-origin safety */ }
+  }
+  return result;
+};
 
 /* ===================== KEYBOARD SHORTCUTS ===================== */
 document.addEventListener('keydown', e => {
@@ -1302,10 +1796,11 @@ document.addEventListener('keydown', e => {
   if (ctrl && e.key === 'h') { e.preventDefault(); openFind(true); }
   if (ctrl && !e.shiftKey && e.key === '/') { e.preventDefault(); const next = { preview: 'split', split: 'source', source: 'preview' }; setMode(next[state.mode] || 'split'); }
   if (ctrl && e.shiftKey && e.key === '/') { e.preventDefault(); setMode(state.mode === 'split' ? 'preview' : 'split'); }
-  if (ctrl && e.key === 'b' && !e.shiftKey && state.mode === 'source') { e.preventDefault(); applyFormat('bold'); }
-  if (ctrl && e.key === 'i' && state.mode === 'source') { e.preventDefault(); applyFormat('italic'); }
-  if (ctrl && e.key === 'u' && state.mode === 'source') { e.preventDefault(); applyFormat('underline'); }
+  if (ctrl && e.key === 'b' && !e.shiftKey && state.mode !== 'preview') { e.preventDefault(); applyFormat('bold'); }
+  if (ctrl && e.key === 'i' && state.mode !== 'preview') { e.preventDefault(); applyFormat('italic'); }
+  if (ctrl && e.key === 'u' && state.mode !== 'preview') { e.preventDefault(); applyFormat('underline'); }
   if (ctrl && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSidebar(); }
+  if (ctrl && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); detachPreview(); }
   if (ctrl && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom(state.zoom + 0.1); }
   if (ctrl && e.key === '-') { e.preventDefault(); setZoom(state.zoom - 0.1); }
   if (ctrl && e.key === '0') { e.preventDefault(); setZoom(1); }
@@ -1357,10 +1852,15 @@ async function insertImage(file, altText = 'image') {
     });
   }
   const tag = `![${altText}](${url})`;
-  const s = source.selectionStart || source.value.length;
-  source.setRangeText(tag, s, s, 'end');
-  if (window._cmSetContent) _cmSetContent(source.value);
-  onSourceInput();
+  if (cmView) {
+    const pos = cmView.state.selection.main.from;
+    cmView.dispatch({ changes: { from: pos, to: pos, insert: tag }, scrollIntoView: true });
+    cmView.focus();
+  } else {
+    const s = source.selectionStart || source.value.length;
+    source.setRangeText(tag, s, s, 'end');
+    onSourceInput();
+  }
 }
 
 /* ===================== IMAGE PASTE ===================== */
@@ -1388,8 +1888,12 @@ document.addEventListener('drop', e => {
     const reader = new FileReader();
     reader.onload = evt => {
       source.value = evt.target.result;
-      state.fileName = file.name; statusFile.textContent = file.name;
+      if (window._cmSetContent) _cmSetContent(evt.target.result);
+      state.fileName = file.name; state.filePath = file.name; state._fileHandle = null;
+      statusFile.textContent = file.name;
       markClean(); renderPreview(source.value); setMode('preview');
+      const tab = tabs.find(t => t.id === activeTabId);
+      if (tab) { tab.fileName = file.name; tab.filePath = file.name; tab.fileHandle = null; tab.content = evt.target.result; renderTabBar(); saveTabs(); }
     };
     reader.readAsText(file);
   } else if (file.type.startsWith('image/')) {
@@ -1404,6 +1908,50 @@ document.addEventListener('drop', e => {
 const tabs = [];
 let activeTabId = null;
 const LS_TABS_KEY = 'markflow_v4_tabs';
+const IDB_NAME = 'markflow_handles';
+const IDB_STORE = 'handles';
+
+/* --- IndexedDB helpers for FileSystemFileHandle persistence --- */
+function _openHandleDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function _saveHandles() {
+  try {
+    const db = await _openHandleDB();
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    store.clear();
+    for (const t of tabs) {
+      if (t.fileHandle) store.put(t.fileHandle, t.id);
+    }
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+    db.close();
+  } catch { /* IndexedDB unavailable */ }
+}
+async function _loadHandles() {
+  try {
+    const db = await _openHandleDB();
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const store = tx.objectStore(IDB_STORE);
+    const map = {};
+    await new Promise((resolve, reject) => {
+      const req = store.openCursor();
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) { map[cursor.key] = cursor.value; cursor.continue(); }
+        else resolve();
+      };
+      req.onerror = reject;
+    });
+    db.close();
+    return map;
+  } catch { return {}; }
+}
 
 function createTab(opts = {}) {
   const id = 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -1444,6 +1992,9 @@ function switchTab(id) {
     const cur = tabs.find(t => t.id === activeTabId);
     if (cur) {
       cur.content = source.value;
+      cur.fileHandle = state._fileHandle;
+      cur.fileName = state.fileName;
+      cur.filePath = state.filePath;
       cur.scrollSource = source.scrollTop;
       cur.scrollPreview = preview.scrollTop;
     }
@@ -1499,22 +2050,25 @@ function saveTabs() {
     const data = tabs.map(t => ({ id: t.id, fileName: t.fileName, filePath: t.filePath, content: t.content }));
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({ tabs: data, active: activeTabId }));
   } catch { /* storage full */ }
+  _saveHandles();
 }
 
-function loadTabs() {
+async function loadTabs() {
   try {
     const raw = localStorage.getItem(LS_TABS_KEY);
     if (raw) {
       const data = JSON.parse(raw);
       if (data.tabs && data.tabs.length) {
+        const handleMap = await _loadHandles();
         data.tabs.forEach(t => tabs.push({ id: t.id, fileName: t.fileName, filePath: t.filePath || null,
-          fileHandle: null, content: t.content || '', dirty: false, scrollSource: 0, scrollPreview: 0 }));
+          fileHandle: handleMap[t.id] || null, content: t.content || '', dirty: false, scrollSource: 0, scrollPreview: 0 }));
         activeTabId = data.active || tabs[0].id;
         renderTabBar();
         const active = tabs.find(t => t.id === activeTabId) || tabs[0];
         source.value = active.content;
         if (window._cmSetContent) _cmSetContent(active.content);
         state.fileName = active.fileName;
+        state._fileHandle = active.fileHandle;
         statusFile.textContent = active.fileName;
         return true;
       }
@@ -1523,18 +2077,20 @@ function loadTabs() {
   return false;
 }
 
-// Override markDirty/markClean to also update tab
-const _origMarkDirty = markDirty, _origMarkClean = markClean;
-function markDirty() {
-  _origMarkDirty();
-  const tab = tabs.find(t => t.id === activeTabId);
-  if (tab) { tab.dirty = true; renderTabBar(); }
-}
-function markClean() {
-  _origMarkClean();
-  const tab = tabs.find(t => t.id === activeTabId);
-  if (tab) { tab.dirty = false; renderTabBar(); }
-}
+// Wrap markDirty/markClean to also update tab
+(function() {
+  const _origMarkDirty = markDirty, _origMarkClean = markClean;
+  markDirty = function() {
+    _origMarkDirty();
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (tab) { tab.dirty = true; renderTabBar(); }
+  };
+  markClean = function() {
+    _origMarkClean();
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (tab) { tab.dirty = false; renderTabBar(); }
+  };
+})();
 
 document.getElementById('btn-new-tab').addEventListener('click', () => {
   const tab = createTab({ content: '', fileName: 'Untitled' });
@@ -1581,12 +2137,20 @@ source.addEventListener('input', saveDraft);
 /* ===================== AUTO-SAVE TO FILE ===================== */
 setInterval(async () => {
   if (state.dirty && state._fileHandle) {
-    await saveFile();
+    try {
+      // Only auto-save if we already have write permission (no prompt)
+      const perm = await state._fileHandle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') return;
+      const writable = await state._fileHandle.createWritable();
+      await writable.write(source.value);
+      await writable.close();
+      markClean();
+    } catch { /* silently skip */ }
   }
 }, 30000);
 
 /* ===================== INIT ===================== */
-(function init() {
+(async function init() {
   // Auto-detect dark mode if no saved theme
   const raw = (() => { try { return localStorage.getItem(LS_KEY); } catch { return null; } })();
   const savedTheme = raw ? (() => { try { return JSON.parse(raw).theme; } catch { return null; } })() : null;
@@ -1598,7 +2162,7 @@ setInterval(async () => {
   }
 
   // Load tabs, fall back to old single-draft, fall back to default content
-  const hadTabs = loadTabs();
+  const hadTabs = await loadTabs();
   if (!hadTabs) {
     const hasDraft = loadDraft();
     const content = hasDraft ? source.value : DEFAULT_CONTENT;

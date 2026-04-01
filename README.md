@@ -6,49 +6,70 @@
 
 ---
 
+## Detachable Preview Window
+
+Pop the live preview into its own window with **`Ctrl+Shift+D`** (or *View → Detach Preview Window*).
+
+- **Live sync** — content updates in real time as you type
+- **Theme sync** — the detached window inherits the current app theme automatically
+- **Multi-monitor friendly** — opens on the opposite half of your screen so you can drag it to a second display
+- **Auto-reconnect** — closing the popup restores the inline preview seamlessly
+- **Full styling** — tables, code blocks, math, diagrams, and all formatting render exactly as in the main window
+
+Write on one screen, preview on another — ideal for presentations, documentation review, or maximizing editor space.
+
+---
+
 ## Features
 
 ### Editor
-- **Split-pane live preview** — edit and see rendered output side by side
-- **CodeMirror 6** source editor with syntax highlighting and auto-pairing
-- **Three view modes** — Edit, Preview, Split (cycle with `Ctrl+/`)
-- **Word wrap, spell check, focus mode, typewriter mode**
-- **Find & Replace** with live highlights in both source and preview
-- **Auto-save to file** every 30 seconds (when a file is open)
-- **Draft auto-save** to localStorage — never lose unsaved work
-
-### Tabs
-- **Multi-tab documents** — open multiple files at once
-- Tab state (content, scroll position) persisted across sessions
+- **CodeMirror 6** source editor with syntax highlighting, line numbers, and auto-pairing
+- **Three view modes** — Source, Preview, Split (cycle with `Ctrl+/`)
+- **Draggable split divider** with proportional scroll sync
+- **Multi-tab documents** — open, edit, and switch between files freely
+- **Find & Replace** with regex, case-sensitive toggle, match highlighting in preview
+- **Focus Mode** (F8) — dims everything except the current paragraph
+- **Typewriter Mode** (F9) — keeps the cursor line centered
+- **Zoom** — `Ctrl+=` / `Ctrl+-` / `Ctrl+0` (0.5× – 2.5×)
+- **Spell check toggle**, **word wrap toggle** (F10)
 
 ### Markdown Support
-- Full **GitHub Flavored Markdown** (GFM)
+- **GitHub Flavored Markdown** — tables, task lists, strikethrough, autolinks
 - **Math** — inline `$...$` and block `$$...$$` via KaTeX
-- **Diagrams** — Mermaid (flowcharts, sequence, Gantt, etc.)
-- **Syntax highlighting** — via highlight.js
-- **Definition lists**, **footnotes**, **containers** (warning / info / tip)
-- **Superscript**, **subscript**, **underline**, **highlight**, **strikethrough**
+- **Diagrams** — Mermaid flowcharts, sequence, Gantt, and more
+- **Syntax highlighting** — 190+ languages via highlight.js
+- **Extended syntax** — `==highlight==`, `++underline++`, `^super^`, `~sub~`, definition lists, footnotes
+- **Custom containers** — `::: warning`, `::: info`, `::: tip` with styled icons
+
+### File Operations
+- **Native file access** — open, save, and save‑as via File System Access API
+- **Open Folder** — browse directories in the sidebar, click to open `.md` files or insert images
+- **Drag & drop** files and images into the editor
+- **Paste images** from clipboard — uploaded or embedded as base64
+- **Auto‑save** every 30 seconds + draft recovery via localStorage
+- **File handle persistence** — reopened files retain save access across page reloads (IndexedDB)
 
 ### Export
 - **5 export themes** — Clean, GitHub, Academic, Dark, Print/SOP
-- Export as **self-contained HTML** (all styles inline)
-- **Export PDF** via browser print
-- Export as **plain text**
-- Copy rendered HTML to clipboard
-
-### Files
-- **File System Access API** — open and save `.md` files directly on disk
-- **Drag & drop** files into the editor
-- **Image paste** — paste images from clipboard, auto-uploaded to [0x0.st](https://0x0.st) or embedded as base64
+- **Self‑contained HTML** export with all styles inline
+- **PDF** via browser print with dedicated print CSS
+- **Plain text** download
+- **Copy HTML** to clipboard
 
 ### Interface
-- **5 themes** — Default, Dark, Solarized, GitHub, Dracula
-- **Auto dark mode** — respects `prefers-color-scheme`
-- **Outline panel** — live heading tree with scroll tracking
+- **5 app themes** — Default, Dark, Solarized, GitHub, Dracula (auto dark mode)
+- **Outline panel** — live heading tree with active scroll tracking
+- **File browser panel** — directory tree from `Open Folder`
 - **Reading progress bar**
-- **Table editor** — visual grid UI for building Markdown tables
-- **Zoom control** (`Ctrl+=` / `Ctrl+-` / `Ctrl+0`)
-- **PWA** — installable as a desktop app, works offline
+- **Word count, character count, line count, reading time** in the status bar
+- **Document logo** — set a logo image that appears in preview, export, and print
+- **Table editor** — visual grid builder for Markdown tables
+
+### Installable App (PWA)
+- Install to desktop — works offline via service worker
+- **File handler** — double-click `.md` files to open in MarkFlow
+- **Share target** — receive shared files from other apps
+- **App shortcut** — "New Document" from the OS app launcher
 
 ---
 
@@ -67,9 +88,10 @@
 | Bold | `Ctrl+B` |
 | Italic | `Ctrl+I` |
 | Underline | `Ctrl+U` |
-| Toggle Source/Preview | `Ctrl+/` |
+| Cycle View Mode | `Ctrl+/` |
 | Toggle Split | `Ctrl+Shift+/` |
-| Toggle Outline | `Ctrl+Shift+B` |
+| Toggle Sidebar | `Ctrl+Shift+B` |
+| **Detach Preview** | **`Ctrl+Shift+D`** |
 | Focus Mode | `F8` |
 | Typewriter Mode | `F9` |
 | Word Wrap | `F10` |
@@ -84,12 +106,11 @@ No build step required. Just open `index.html` in any modern browser:
 ```bash
 git clone https://github.com/srart/markflow.git
 cd markflow
-# Open index.html in your browser
-# Or serve it locally:
+# Open index.html in your browser, or serve locally:
 npx serve .
 ```
 
-> The File System Access API requires a browser that supports it (Chrome, Edge). Firefox falls back to download-based save.
+> The File System Access API requires Chrome or Edge. Firefox falls back to download-based save.
 
 ---
 
